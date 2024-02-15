@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 const fs = require('fs');
-const { SourceMapConsumer } = require('source-map');
 const path = require('path');
 const yargs = require('yargs/yargs');
 const { hideBin } = require('yargs/helpers');
@@ -30,62 +29,36 @@ const handleFile = async (minifiedFilePath) => {
     const rawSourceMap = fs.readFileSync(sourceMapPath);
     const rawSourceMapJson = JSON.parse(rawSourceMap);
 
-    await SourceMapConsumer.with(rawSourceMapJson, null, (sourceMapConsumer) => {
-        const sources = sourceMapConsumer.sources;
+    if (!rawSourceMapJson.sourcesContent || rawSourceMapJson.sourcesContent.length <= 0) {
+        throw new Error(`source map ${sourceMapPath} doesn't have a sourcesContent field`);
+    }
 
-        const sourceContents = sources.reduce((contents, source) => {
-            contents[source] = sourceMapConsumer.sourceContentFor(source, true);
-            return contents;
-        }, {});
-
-        if (Object.values(sourceContents).some(content => content !== null)) {
-            // If sourcesContent exists, write it to the file
-            for (const source in sourceContents) {
-                if (sourceContents[source] !== null) {
-                    const originalFilePath = path.join(path.dirname(minifiedFilePath), path.basename(source, '.js') + '');
-                    fs.mkdirSync(path.dirname(originalFilePath), { recursive: true });
-                    fs.writeFileSync(originalFilePath, sourceContents[source]);
-                    console.log(`Source code recovered to ${originalFilePath}`);
-                }
-            }
+    const seen = new Map();
+    const contents = rawSourceMapJson.sourcesContent;
+    const sources = rawSourceMapJson.sources;
+    for (const i in contents) {
+        const source = sources[i];
+        const content = contents[i];
+        const url = new URL(source.indexOf('://') >= 0 ?
+            source :
+            `file://${source}`);
+        let originalPath = path.normalize(url.pathname + url.search);
+        if (seen.has(originalPath)) {
+            const occurrences = seen.get(originalPath);
+            seen.set(originalPath, occurrences + 1);
+            originalPath = `${originalPath} (${occurrences})`;
         } else {
-            // If sourcesContent doesn't exist, reconstruct the source code
-            const lines = minifiedCode.split('\n');
-            let reconstructedSource = '';
-
-            lines.forEach((line, lineIndex) => {
-                const lineNum = lineIndex + 1;
-                const columnCount = line.length;
-
-                for (let column = 0; column < columnCount; column++) {
-                    const pos = { line: lineNum, column: column };
-                    const originalPosition = sourceMapConsumer.originalPositionFor(pos);
-
-                    if (originalPosition.source === null) continue;
-
-                    if (originalPosition.name) {
-                        reconstructedSource += originalPosition.name;
-                    } else {
-                        reconstructedSource += minifiedCode.charAt(column);
-                    }
-                }
-
-                reconstructedSource += '\n';
-            });
-
-            // prettify the code
-            try {
-                reconstructedSource = prettier.format(reconstructedSource, { semi: false, parser: "babel" });
-            } catch (error) {
-                console.error("An error occurred while prettifying the code:", error);
-            }
-
-            const originalFilePath = path.join(path.dirname(minifiedFilePath), path.basename(minifiedFilePath, '.js') + '-recovered.js');
-            fs.mkdirSync(path.dirname(originalFilePath), { recursive: true });
-            fs.writeFileSync(originalFilePath, reconstructedSource);
-            console.log(`Source code recovered to ${originalFilePath}`);
+            seen.set(originalPath, 1);
         }
-    });
+
+        const targetPath = path.join(
+            path.dirname(minifiedFilePath),
+            originalPath);
+
+        fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+        fs.writeFileSync(targetPath, content);
+        console.log(`Source ${source} recovered to ${targetPath}`);
+    }
 };
 
 const handlePath = (inputPath) => {

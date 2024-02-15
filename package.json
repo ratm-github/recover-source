@@ -22,8 +22,6 @@
   "author": "Pablo Schaffner",
   "license": "ISC",
   "dependencies": {
-    "prettier": "^3.0.0",
-    "source-map": "^0.7.4",
     "yargs": "^17.7.2"
   }
 }
